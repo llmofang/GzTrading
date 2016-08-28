@@ -70,7 +70,9 @@ class StockTransHandler(threading.Thread):
                         for key, row in df_new_signals.iterrows():
                             askprice = row.askprice
                             limit = self.amount
-                            if 0.4 < askprice <= 0.5:
+                            if 0.5 < askprice:
+                                limit = 0
+                            elif 0.4 < askprice <= 0.5:
                                 limit = min(limit, 20000)
                             elif 0.3 < askprice <= 0.4:
                                 limit = min(limit, 30000)
@@ -94,7 +96,9 @@ class StockTransHandler(threading.Thread):
                             self.logger.debug("askvol: %d", askvol)
                             self.logger.debug("stockcode: %s, askprice: %f, askvol: %d, contactid: %s, seatno: %s",
                                               row.stockcode, row.askprice, askvol, row.contactid, row.seatno)
-                            self.order(row.stockcode, str(row.askprice), str(askvol), row.contactid, row.seatno)
+                            if askvol > 0:
+                                self.logger.info('buying ...... ')
+                                self.order(row.stockcode, str(row.askprice), str(askvol), row.contactid, row.seatno)
         except QException, e:
                 print(e)
         finally:
