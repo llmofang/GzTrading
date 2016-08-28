@@ -13,9 +13,10 @@ import sys
 
 
 class StockTransHandler(threading.Thread):
-    def __init__(self):
+    def __init__(self, amount):
         super(StockTransHandler, self).__init__()
         self._stop = threading.Event()
+        self.amount = amount
 
         logging.config.fileConfig('log.conf')
         self.logger = logging.getLogger('main')
@@ -67,7 +68,33 @@ class StockTransHandler(threading.Thread):
                         df_new_signals = message.data[2]
                         self.logger.debug('new requests data: df_new_signals=%s', df_new_signals.to_string())
                         for key, row in df_new_signals.iterrows():
-                            self.order(row.stockcode, str(row.askprice), str(row.askvol), row.contactid, row.seatno)
+                            askprice = row.askprice
+                            limit = self.amount
+                            if 0.4 < askprice <= 0.5:
+                                limit = min(limit, 20000)
+                            elif 0.3 < askprice <= 0.4:
+                                limit = min(limit, 30000)
+                            elif 0.2 < askprice <= 0.3:
+                                limit = min(limit, 40000)
+                            elif 0.1 < askprice <= 0.2:
+                                limit = min(limit, 50000)
+                            elif 0.05 < askprice <= 0.1:
+                                limit = min(limit, 100000)
+                            elif askprice <= 0.05:
+                                limit = min(limit, self.amount)
+                            self.logger.debug("askprice: %f, limit: %d", askprice, limit)
+
+                            askvol = 0
+                            if row.askprice * row.askvol > limit:
+                                askvol = int(limit/askprice)
+                                askvol = int(askvol / 1000) * 1000
+                            else:
+                                askvol = row.askvol
+
+                            self.logger.debug("askvol: %d", askvol)
+                            self.logger.debug("stockcode: %s, askprice: %f, askvol: %d, contactid: %s, seatno: %s",
+                                              row.stockcode, row.askprice, askvol, row.contactid, row.seatno)
+                            self.order(row.stockcode, str(row.askprice), str(askvol), row.contactid, row.seatno)
         except QException, e:
                 print(e)
         finally:
@@ -96,7 +123,7 @@ class StockTransHandler(threading.Thread):
 
 
 if __name__ == '__main__':
-    st_handler = StockTransHandler()
+    st_handler = StockTransHandler(amount=25000)
     st_handler.start()
     sys.stdin.readline()
     st_handler.stop()
