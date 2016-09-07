@@ -1,15 +1,12 @@
 # -*- coding: utf-8 -*-
 import threading
-import pandas as pd
 import logging
 import logging.config
 import ConfigParser
 from winguiauto import *
-from qpython import qconnection
-import numpy as np
-from qpython.qtype import QException
-from pandas import DataFrame
 import sys
+import redis
+import mdl_neeq_msg_pb2
 
 
 class StockTransHandler(threading.Thread):
@@ -24,13 +21,12 @@ class StockTransHandler(threading.Thread):
         cf = ConfigParser.ConfigParser()
         cf.read("tradeagent.conf")
 
-        q_host = cf.get("kdb", "host")
-        q_port = cf.getint("kdb", "port")
-        self.request_table = cf.get("kdb", "request_table")
+        self.r_host = cf.get("rdb", "host")
+        self.r_port = cf.getint("rdb", "port")
+        self.r = None
+        self.p = None
 
         hwnd_title = cf.get("hwnd_mode", "wnd_title")
-        self.q = qconnection.QConnection(host=q_host, port=q_port, pandas=True)
-        self.q.open()
 
         self.hwnd_parent = findSpecifiedTopWindow(u'网上股票交易系统5.0')
         # self.hwnd_parent = findSpecifiedTopWindow(hwnd_title)
@@ -52,57 +48,53 @@ class StockTransHandler(threading.Thread):
 
     def subscribe_request(self):
         # TODO
-        self.logger.debug('subscribe trade: table=%s', self.request_table)
-        self.q.sync('.u.sub', np.string_(self.request_table), np.string_(''))
+        self.logger.debug('subscribe messages ...')
+        self.r = redis.Redis(host=self.r_host, port=self.r_port, db=0)
+        self.p = self.r.pubsub()
+        self.p.subscribe(['mdl.14.3.*'])
 
-    def trade_signal(self):
+    def on_need_matched_bargain_order(self, data):
         try:
-            message = self.q.receive(data_only=False, raw=False, pandas=True)
-            self.logger.debug('type: %s, message type: %s, data size: %s, is_compressed: %s ',
-                              type(message), message.type, message.size, message.is_compressed)
+            msg = mdl_neeq_msg_pb2.MatchedBargainOrder()
+            msg.ParseFromString(data)
+            if msg.Price.Value/float(msg.Price.DecimalShift) < 0.5 and msg.TranscationType == "6S":
+                self.logger.debug(msg)
+                # print msg.SecurityID, msg.TranscationUnit, msg.TranscationType, msg.Volume, msg.Price.Value/float(msg.Price.DecimalShift),\
+                #     msg.TranscationNo, msg.OrderTime, msg.RecordStatus, msg.ReservedFlag, msg.UpdateTime
+                askprice = msg.Price.Value/float(msg.Price.DecimalShift)
+                limit = self.amount
+                if 0.5 < askprice:
+                    limit = 0
+                elif 0.4 < askprice <= 0.5:
+                    limit = min(limit, 20000)
+                elif 0.3 < askprice <= 0.4:
+                    limit = min(limit, 30000)
+                elif 0.2 < askprice <= 0.3:
+                    limit = min(limit, 40000)
+                elif 0.1 < askprice <= 0.2:
+                    limit = min(limit, 50000)
+                elif 0.05 < askprice <= 0.1:
+                    limit = min(limit, 100000)
+                elif askprice <= 0.05:
+                    limit = min(limit, self.amount)
+                self.logger.debug("askprice: %f, limit: %d", askprice, limit)
 
-            if isinstance(message.data, list):
-                # unpack upd message
-                if len(message.data) == 3 and message.data[0] == 'upd' and message.data[1] == self.request_table:
-                    if isinstance(message.data[2], DataFrame):
-                        df_new_signals = message.data[2]
-                        self.logger.debug('new requests data: df_new_signals=%s', df_new_signals.to_string())
-                        for key, row in df_new_signals.iterrows():
-                            askprice = row.askprice
-                            limit = self.amount
-                            if 0.5 < askprice:
-                                limit = 0
-                            elif 0.4 < askprice <= 0.5:
-                                limit = min(limit, 20000)
-                            elif 0.3 < askprice <= 0.4:
-                                limit = min(limit, 30000)
-                            elif 0.2 < askprice <= 0.3:
-                                limit = min(limit, 40000)
-                            elif 0.1 < askprice <= 0.2:
-                                limit = min(limit, 50000)
-                            elif 0.05 < askprice <= 0.1:
-                                limit = min(limit, 100000)
-                            elif askprice <= 0.05:
-                                limit = min(limit, self.amount)
-                            self.logger.debug("askprice: %f, limit: %d", askprice, limit)
+                askvol = 0
+                if askprice * int(msg.Volume) > limit:
+                    askvol = int(limit/askprice)
+                    askvol = int(askvol / 1000) * 1000
+                else:
+                    askvol = int(msg.Volume)
 
-                            askvol = 0
-                            if row.askprice * row.askvol > limit:
-                                askvol = int(limit/askprice)
-                                askvol = int(askvol / 1000) * 1000
-                            else:
-                                askvol = row.askvol
+                self.logger.debug("askvol: %d", askvol)
+                self.logger.debug("stockcode: %s, askprice: %f, askvol: %d, contactid: %s, seatno: %s",
+                                  msg.SecurityID, askprice, askvol, msg.TranscationUnit, msg.TranscationNo)
+                if askvol > 0:
+                    self.logger.info('buying ...... ')
+                    self.order(msg.SecurityID, str(askprice), str(askvol), msg.TranscationUnit, msg.TranscationNo)
 
-                            self.logger.debug("askvol: %d", askvol)
-                            self.logger.debug("stockcode: %s, askprice: %f, askvol: %d, contactid: %s, seatno: %s",
-                                              row.stockcode, row.askprice, askvol, row.contactid, row.seatno)
-                            if askvol > 0:
-                                self.logger.info('buying ...... ')
-                                self.order(row.stockcode, str(row.askprice), str(askvol), row.contactid, row.seatno)
-        except QException, e:
-                print(e)
-        finally:
-            return df_new_signals
+        except Exception, e:
+                self.logger.error(e)
 
     def order(self, stock_code, price, amount, contact_id, seat_no):
         setEditText(self.hwnd_child3[0], stock_code)      # stock code
