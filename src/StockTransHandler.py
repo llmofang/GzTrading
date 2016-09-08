@@ -127,7 +127,7 @@ class StockTransHandler(threading.Thread):
 
 
 if __name__ == '__main__':
-    st_handler = StockTransHandler(amount=25000)
+    st_handler = StockTransHandler(amount=50000)
     st_handler.start()
     sys.stdin.readline()
     st_handler.stop()
