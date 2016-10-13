@@ -57,6 +57,7 @@ class StockTransHandler(threading.Thread):
         try:
             msg = mdl_neeq_msg_pb2.MatchedBargainOrder()
             msg.ParseFromString(data)
+            self.logger.debug(msg)
             if msg.Price.Value/float(msg.Price.DecimalShift) < 0.5 and msg.TranscationType == "6S":
                 self.logger.debug(msg)
                 # print msg.SecurityID, msg.TranscationUnit, msg.TranscationType, msg.Volume, msg.Price.Value/float(msg.Price.DecimalShift),\
@@ -88,10 +89,10 @@ class StockTransHandler(threading.Thread):
 
                 self.logger.debug("askvol: %d", askvol)
                 self.logger.debug("stockcode: %s, askprice: %f, askvol: %d, contactid: %s, seatno: %s",
-                                  msg.SecurityID, askprice, askvol, msg.TranscationUnit, msg.TranscationNo)
-                if askvol > 0:
+                                  msg.SecurityID, askprice, askvol, msg.TranscationNo, msg.TranscationUnit)
+                if askvol > 10000:
                     self.logger.info('buying ...... ')
-                    self.order(msg.SecurityID, str(askprice), str(askvol), msg.TranscationUnit, msg.TranscationNo)
+                    self.order(msg.SecurityID, str(askprice), str(askvol), msg.TranscationNo, msg.TranscationUnit)
 
         except Exception, e:
                 self.logger.error(e)
@@ -114,12 +115,21 @@ class StockTransHandler(threading.Thread):
 
     def run(self):
         self.subscribe_request()
-        while True:
-            self.trade_signal()
+        self.logger.info("receiving message...")
+        for item in self.p.listen():
+            if str(item['type']) == 'message':
+		channel = str(item['channel'])
+		if channel[0:9] == "mdl.14.3.":
+			self.on_need_matched_bargain_order(item['data'])                     
+		else:
+			print "unknown channel: %s" % (channel)
+        # while True:
+            #self.trade_signal()
+            # self.on_need_matched_bargain_order()
 
 
 if __name__ == '__main__':
-    st_handler = StockTransHandler(amount=50000)
+    st_handler = StockTransHandler(amount=100000)
     st_handler.start()
     sys.stdin.readline()
     st_handler.stop()
