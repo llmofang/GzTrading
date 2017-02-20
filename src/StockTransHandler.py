@@ -7,6 +7,7 @@ from winguiauto import *
 import sys
 import redis
 import mdl_neeq_msg_pb2
+import time
 
 
 class StockTransHandler(threading.Thread):
@@ -58,7 +59,7 @@ class StockTransHandler(threading.Thread):
             msg = mdl_neeq_msg_pb2.MatchedBargainOrder()
             msg.ParseFromString(data)
             self.logger.debug(msg)
-            if msg.Price.Value/float(msg.Price.DecimalShift) < 0.5 and msg.TranscationType == "6S":
+            if msg.Price.Value/float(msg.Price.DecimalShift) <= 0.5 and msg.TranscationType == "6S" and msg.SecurityID != "833794":
                 self.logger.debug(msg)
                 # print msg.SecurityID, msg.TranscationUnit, msg.TranscationType, msg.Volume, msg.Price.Value/float(msg.Price.DecimalShift),\
                 #     msg.TranscationNo, msg.OrderTime, msg.RecordStatus, msg.ReservedFlag, msg.UpdateTime
@@ -67,16 +68,14 @@ class StockTransHandler(threading.Thread):
                 if 0.5 < askprice:
                     limit = 0
                 elif 0.4 < askprice <= 0.5:
-                    limit = min(limit, 20000)
-                elif 0.3 < askprice <= 0.4:
-                    limit = min(limit, 30000)
-                elif 0.2 < askprice <= 0.3:
                     limit = min(limit, 40000)
+                elif 0.3 < askprice <= 0.4:
+                    limit = min(limit, 60000)
+                elif 0.2 < askprice <= 0.3:
+                    limit = min(limit, 80000)
                 elif 0.1 < askprice <= 0.2:
-                    limit = min(limit, 50000)
-                elif 0.05 < askprice <= 0.1:
                     limit = min(limit, 100000)
-                elif askprice <= 0.05:
+                elif askprice <= 0.1:
                     limit = min(limit, self.amount)
                 self.logger.debug("askprice: %f, limit: %d", askprice, limit)
 
@@ -88,11 +87,15 @@ class StockTransHandler(threading.Thread):
                     askvol = int(msg.Volume)
 
                 self.logger.debug("askvol: %d", askvol)
-                self.logger.debug("stockcode: %s, askprice: %f, askvol: %d, contactid: %s, seatno: %s",
+                self.logger.debug("stockcode: %s, askprice: %f, askvol: %d, contactid: %d, seatno: %s",
                                   msg.SecurityID, askprice, askvol, msg.TranscationNo, msg.TranscationUnit)
-                if askvol > 10000:
+                self.logger.debug("stockcode: %s, askprice: %s, askvol: %s, contactid: %s, seatno: %s",
+                                  str(msg.SecurityID), str(askprice), str(askvol), str(msg.TranscationNo), str(msg.TranscationUnit))
+                if askvol >= 8000:
                     self.logger.info('buying ...... ')
-                    self.order(msg.SecurityID, str(askprice), str(askvol), msg.TranscationNo, msg.TranscationUnit)
+                    self.order(str(msg.SecurityID), str(askprice), str(askvol), str(msg.TranscationNo), str(msg.TranscationUnit))
+                    #time.sleep(1)
+                    #self.order(str(msg.SecurityID), ("%.2f" % askprice), str(askvol), str(msg.TranscationNo), str(msg.TranscationUnit))
 
         except Exception, e:
                 self.logger.error(e)
@@ -100,15 +103,19 @@ class StockTransHandler(threading.Thread):
     def order(self, stock_code, price, amount, contact_id, seat_no):
         setEditText(self.hwnd_child3[0], stock_code)      # stock code
         setEditText(self.hwnd_child3[3], price)         # price
+        #time.sleep(5)
         setEditText(self.hwnd_child3[5], amount)        # amount
+        # time.sleep(5)
         setEditText(self.hwnd_child3[6], contact_id)     # 约定号
         setEditText(self.hwnd_child3[7], seat_no)    # 对方席位
+        # time.sleep(5)
         clickButton(self.hwnd_child3[9])            # buy
         continue_clicked = False
         while not continue_clicked:
             # time.sleep(0.1)
             hwnd_popup = findPopupWindow(self.hwnd_parent)
             if hwnd_popup:
+                #time.sleep(5)
                 hwnd_controls = findControls(hwnd_popup, wantedClass='Button')
                 clickButton(hwnd_controls[1])   # 继续买入
                 continue_clicked = True
@@ -116,6 +123,7 @@ class StockTransHandler(threading.Thread):
     def run(self):
         self.subscribe_request()
         self.logger.info("receiving message...")
+        # self.order('834379', '0.25', '1000', '99996807', '727200')
         for item in self.p.listen():
             if str(item['type']) == 'message':
 		channel = str(item['channel'])
@@ -129,7 +137,7 @@ class StockTransHandler(threading.Thread):
 
 
 if __name__ == '__main__':
-    st_handler = StockTransHandler(amount=100000)
+    st_handler = StockTransHandler(amount=90000)
     st_handler.start()
     sys.stdin.readline()
     st_handler.stop()
